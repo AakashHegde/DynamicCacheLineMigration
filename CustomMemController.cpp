@@ -1,26 +1,4 @@
-#include <array>
-#include <unordered_map>
-#include <queue>
-#include <iostream>
-#include <math.h>
-#include <memory>
-
-using namespace std;
-
-#define MQ_LENGTH 10
-#define MQ_PROMOTE_THRESHOLD MQ_LENGTH/2
-
-#define MIGRATION_COST 1000 //cycles
-
-// move the follwoing defines to input arguments to the program
-#define RLDRAM_SIZE 1024*1024*1024*1 // 1GB
-#define LPDRAM_SIZE 1024*1024*1024*3 // 3GB
-#define CACHELINE_SIZE 64
-#define NUM_CACHELINES_RLDRAM (RLDRAM_SIZE/CACHELINE_SIZE)
-
-typedef unsigned long long addrType;
-
-bool isAboveFilterThreshold(int currentTime, int prevTime, int queueNum);
+#include "CustomMemController.h"
 
 class descriptor_T
 {
@@ -28,14 +6,14 @@ class descriptor_T
     const bool inRLDRAM;
     unsigned int MQNum; // indicate which queue this descriptor is currently in
     const unsigned long long blockID; // can be the cacheline address
-    unsigned long long refCounter; // reference counter
-    unsigned long long prevAccessTime; // expirationTime = currentTime + lifeTime
-    // unsigned long long expirationTime;
+    unsigned long refCounter; // reference counter
+    timeType prevAccessTime; // expirationTime = currentTime + lifeTime
+    // timeType expirationTime;
 
-    descriptor_T(unsigned long long addr, int inRLDRAM) : 
+    descriptor_T(addrType addr, int inRLDRAM) : 
     inRLDRAM(inRLDRAM),
     MQNum(0),
-    blockID(addr>>6),
+    blockID(addr>>NUM_CACHELINE_BITS),
     refCounter(0),
     prevAccessTime(0) {}
 
@@ -53,10 +31,27 @@ class descriptor_T
     }
 };
 
-unordered_map<addrType, addrType> ramapTable;
-unordered_map<addrType, descriptor_T *> descriptorTable;
-array<queue<descriptor_T *>, MQ_LENGTH> MQ;
-queue<descriptor_T *> victimQueue;
+class memoryAccess_T {
+    public:
+    const addrType address;
+    const bool isWrite;
+    const timeType timeStamp;
+
+    memoryAccess_T(addrType address, bool isWrite, timeType timeStamp) :
+    address(address),
+    isWrite(isWrite),
+    timeStamp(timeStamp) {}
+
+    friend ostream& operator<<(ostream& os, memoryAccess_T const& ma) {
+        return os << ma.address << " " << ma.isWrite << " " << ma.timeStamp << endl;
+    }
+};
+
+unordered_map<timeType, memoryAccess_T *> memoryAccesses;
+unordered_map<addrType, addrType> ramapTable;                       // Hash Table to store memory access redirections
+unordered_map<addrType, descriptor_T *> descriptorTable;            // Hash Table to lookup descriptor based on incoming address
+array<queue<descriptor_T *>, MQ_LENGTH> MQ;                         // Array or Queues
+queue<descriptor_T *> victimQueue;                                  // Queue for the Victim Descriptors of the RLDRAM
 
 // This is used to check whether to update the refCounter
 bool isAboveFilterThreshold(int currentTime, int prevTime, int queueNum)
@@ -68,13 +63,85 @@ void initVictimQueue()
 {
     for(int addr = 0; addr < NUM_CACHELINES_RLDRAM; ++addr)
     {
-        descriptor_T *ptr = new descriptor_T(addr, true); // make this a smart pointer
+        descriptor_T *ptr = new descriptor_T(addr, true);   //TODO: make this a smart pointer
         // shared_ptr<descriptor_T> ptr(addr, true);
         descriptorTable[addr] = ptr;
     }
 }
 
+void readTraceFile(string file, timeType * endTime) {
+    ifstream trace_file;
+
+    trace_file.open(file, ios::in);
+    if (trace_file.fail()) {
+        cout << "Failed to open Trace File." << endl;
+        exit(1);
+    }
+
+    regex addr_exp("0[xX][0-9a-fA-F]+");
+    regex type_exp("READ|WRITE");
+    regex time_exp("\\d+$");
+    smatch m;
+
+    string currLine;
+    addrType addr;
+    bool isWrite;
+    timeType time;
+    bool error = false;
+    while (getline(trace_file, currLine)) {
+        // Get Address
+        if (regex_search(currLine, m, addr_exp)) {
+            for (auto x:m)
+                addr = stoi(x, 0, 16);
+        } else error = true;
+
+        // Get Type
+        if (regex_search(currLine, m, type_exp)) {
+            for (auto x:m)
+                isWrite = x == "WRITE";
+        } else error = true;
+
+        // Get Time
+        if (regex_search(currLine, m, time_exp)) {
+            for (auto x:m)
+                time = stoi(x);
+        } else error = true;
+
+        if (error) {
+            cout << "Error: Couldn't convert line." << endl;
+            exit(1);
+        }
+
+        memoryAccess_T * ptr = new memoryAccess_T(addr, isWrite, time);
+        memoryAccesses[time] = ptr;
+    }
+
+    *endTime = time;
+
+    trace_file.close();
+}
+
 int main()
 {
+    // 1. Setup the basic Queue and Related Structures for the MQ and the Descriptors
     initVictimQueue();
+
+    // 2. Read the Trace file
+    timeType traceEndTime;
+    readTraceFile("traces/LU.trace", &traceEndTime);
+
+    // Print accesses
+    // vector<memoryAccess_T>::iterator p;
+    // for (p=memoryAccesses.begin(); p!=memoryAccesses.end(); p++) {
+    //     cout << *p;
+    // }
+
+    // Start iteration through all time-steps until the traceEndTime
+    for (int i = 0; i <= traceEndTime; i++) {
+        // 3. Implement Queuing Algorithm
+
+        // 4. Implement Remap Table
+
+        // 5. Write to Trace File
+    }
 }
