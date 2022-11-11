@@ -15,6 +15,7 @@ using namespace std;
 #define MQ_PROMOTE_THRESHOLD MQ_LENGTH/2
 
 #define MIGRATION_COST 1000 //cycles
+#define LIFE_TIME 100'000
 
 // move the follwoing defines to input arguments to the program
 #define RLDRAM_SIZE 1024*1024*1024*1 // 1GB
@@ -26,4 +27,4 @@ using namespace std;
 typedef unsigned long long addrType;
 typedef unsigned long long timeType;
 
-bool isAboveFilterThreshold(int currentTime, int prevTime, int queueNum);
+bool isAboveFilterThreshold(int prevTime, int queueNum);
