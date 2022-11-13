@@ -68,6 +68,7 @@ bool isAboveFilterThreshold(int prevTime, int queueNum) {
     return (currTimeStep - prevTime) > (MIGRATION_COST / pow(2, queueNum+1));
 }
 
+// This is used to check if an LP Descriptor exists for a given memory address
 bool LPDescriptorExists(addrType addr) {
     if (LPDescriptorTable.count(addr)) {
         return true;
@@ -77,13 +78,7 @@ bool LPDescriptorExists(addrType addr) {
 
 descriptor_T * createLPDescriptorIfNotExists(addrType addr) {
 
-    if (LPDescriptorExists(addr)) {
-        return LPDescriptorTable[addr];
-    }
-
     descriptor_T * d = new descriptor_T(addr, false);   //TODO: make this a smart pointer
-    d->updateAccessTime();
-    d->refCounter = 1;      // First memory access which is why we are creating this descriptor
     
     // Add to Descriptor Table
     LPDescriptorTable[addr] = d;
@@ -172,7 +167,7 @@ int main()
     // 2. Read the Trace file
     cout << "Reading Input Trace File..." << endl;
     timeType traceEndTime;
-    readTraceFile("traces/LU.trace", &traceEndTime);
+    readTraceFile("traces/FFT.trace", &traceEndTime);
     cout << "Completed Reading Input Trace File. Trace End Cycle: " << traceEndTime << endl;
 
     memoryAccess_T * currMemAccess;
@@ -185,10 +180,28 @@ int main()
     for (currTimeStep = 0; currTimeStep <= traceEndTime; currTimeStep++) {
 
         if (isMemoryAccessTimeStep(currTimeStep)) {
+            // Memory access at this cycle, so do stuff with the Descriptor
+
             currMemAccess = memoryAccesses[currTimeStep];
+            descriptor_T * d;
             
-            // Create new Descriptor if this is a new memory access
-            descriptor_T * d = createLPDescriptorIfNotExists(currMemAccess->address);
+            if (LPDescriptorExists(currMemAccess->cacheLineAddr)) {
+                // Get the Descriptor of this previously seen memory address
+                d = LPDescriptorTable[currMemAccess->cacheLineAddr];
+                d->updateAccessTime();
+                d->updateRefCounter();
+
+                // TODO: Move descriptor on the tail of it's current queue
+            } else {
+                // Create new Descriptor if this is a new memory access
+                d = createLPDescriptorIfNotExists(currMemAccess->cacheLineAddr);
+                d->updateAccessTime();
+                d->refCounter = 1;      // First memory access which is why we are creating this descriptor
+
+                // TODO:
+                // Place descriptor on the tail of Queue 0 (CREATE FUNCTION TO MOVE DESCRIPTORS to Queue X)
+                // Set NumMQ attribute
+            }
         }
 
         // 3. Implement Queuing Algorithm

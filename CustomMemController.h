@@ -14,8 +14,8 @@ using namespace std;
 #define MQ_LENGTH 10
 #define MQ_PROMOTE_THRESHOLD MQ_LENGTH/2
 
-#define MIGRATION_COST 1000 //cycles
-#define LIFE_TIME 100'000
+#define MIGRATION_COST 1000 // Cycles
+#define LIFE_TIME 100'000   // Cycles
 
 // move the follwoing defines to input arguments to the program
 #define RLDRAM_SIZE 1024*1024*1024*1 // 1GB
