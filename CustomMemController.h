@@ -2,6 +2,7 @@
 #include <unordered_map>
 #include <queue>
 #include <vector>
+#include <list>
 #include <iostream>
 #include <fstream>
 #include <math.h>

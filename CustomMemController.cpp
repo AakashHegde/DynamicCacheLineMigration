@@ -10,13 +10,13 @@ class descriptor_T
     
     public:
     const bool inRLDRAM;
-    unsigned int MQNum;                 // Indicate which queue this descriptor is currently in
+    int MQNum;                          // Indicate which queue this descriptor is currently in
     const unsigned long long blockID;   // Can be the cacheline address
     unsigned long refCounter;           // Reference Counter
 
     descriptor_T(addrType addr, bool inRLDRAM) : 
     inRLDRAM(inRLDRAM),
-    MQNum(0),
+    MQNum(-1),
     blockID(addr >> NUM_CACHELINE_BITS),
     refCounter(0),
     prevAccessTime(0) {}
@@ -33,6 +33,7 @@ class descriptor_T
     }
 
     friend ostream& operator<<(ostream& os, descriptor_T const& d) {
+        // TODO: Print blockID in HEX value so that it's the address
         return os << "blockID: " << d.blockID <<  " RefCounter: " << d.refCounter << " PrevAccess: " << d.prevAccessTime;
     }
 };
@@ -60,7 +61,7 @@ unordered_map<timeType, memoryAccess_T *> memoryAccesses;           // Array of 
 unordered_map<addrType, addrType> ramapTable;                       // Hash Table to store memory access redirections
 unordered_map<addrType, descriptor_T *> LPDescriptorTable;          // Hash Table to lookup descriptor for LPDRAM addresses
 unordered_map<addrType, descriptor_T *> RLDescriptorTable;          // Hash Table to lookup descriptor for RLDRAM addresses
-array<queue<descriptor_T *>, MQ_LENGTH> MQ;                         // Array or Queues
+array<list<descriptor_T *>, MQ_LENGTH> MQ;                  // Array or Queues
 queue<descriptor_T *> victimQueue;                                  // Queue for the Victim Descriptors of the RLDRAM
 
 // This is used to check whether to update the refCounter
@@ -84,6 +85,30 @@ descriptor_T * createLPDescriptorIfNotExists(addrType addr) {
     LPDescriptorTable[addr] = d;
 
     return d;
+}
+
+void insertDescriptorToQueue(descriptor_T * d, int level) {
+    MQ[level].push_back(d);
+    d->MQNum = level;
+}
+
+void moveDescriptorToBackOfQueue(descriptor_T * d) {
+    int level = d->MQNum;
+    MQ[level].remove(d);
+    // Insert to the back of the same queue
+    insertDescriptorToQueue(d, level);
+}
+
+void printMQ() {
+    for (int level = MQ_LENGTH-1; level >= 0 ; level--) {
+        cout << level << ": ";
+        for (auto i: MQ[level])
+        {
+            cout << *i << " || ";
+        }
+        cout << endl;
+    }
+    cout << "--------------------" << endl;
 }
 
 void initVictimQueue()
@@ -167,12 +192,12 @@ int main()
     // 2. Read the Trace file
     cout << "Reading Input Trace File..." << endl;
     timeType traceEndTime;
-    readTraceFile("traces/FFT.trace", &traceEndTime);
+    readTraceFile("traces/testMoveDescriptor.trace", &traceEndTime);
     cout << "Completed Reading Input Trace File. Trace End Cycle: " << traceEndTime << endl;
 
     memoryAccess_T * currMemAccess;
-    cout << "Number of LP Descriptors: " << LPDescriptorTable.size() << endl;
-    cout << "Number of RL Descriptors: " << RLDescriptorTable.size() << endl;
+    // cout << "Number of LP Descriptors: " << LPDescriptorTable.size() << endl;
+    // cout << "Number of RL Descriptors: " << RLDescriptorTable.size() << endl;
     cout << "Victim Queue Size: " << victimQueue.size() << endl;
 
     // Start iteration through all time-steps until the traceEndTime
@@ -191,16 +216,14 @@ int main()
                 d->updateAccessTime();
                 d->updateRefCounter();
 
-                // TODO: Move descriptor on the tail of it's current queue
+                moveDescriptorToBackOfQueue(d);
             } else {
                 // Create new Descriptor if this is a new memory access
                 d = createLPDescriptorIfNotExists(currMemAccess->cacheLineAddr);
                 d->updateAccessTime();
                 d->refCounter = 1;      // First memory access which is why we are creating this descriptor
 
-                // TODO:
-                // Place descriptor on the tail of Queue 0 (CREATE FUNCTION TO MOVE DESCRIPTORS to Queue X)
-                // Set NumMQ attribute
+                insertDescriptorToQueue(d, 0);
             }
         }
 
@@ -209,11 +232,12 @@ int main()
         // 4. Implement Remap Table
 
         // 5. Write to Trace File
+        printMQ();
     }
 
     cout << "Completed Memory Controller Simulation." << endl;
 
     cout << "Number of LP Descriptors: " << LPDescriptorTable.size() << endl;
-    cout << "Number of RL Descriptors: " << RLDescriptorTable.size() << endl;
-    cout << "Victim Queue Size: " << victimQueue.size() << endl;
+    // cout << "Number of RL Descriptors: " << RLDescriptorTable.size() << endl;
+    // cout << "Victim Queue Size: " << victimQueue.size() << endl;
 }
