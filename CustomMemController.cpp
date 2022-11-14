@@ -119,7 +119,11 @@ void demoteDescriptor(descriptor_T * d) {
         // Insert to the back of the lower queue
         insertDescriptorToQueue(d, level-1);
         d->updateAccessTime();
-        d->refCounter = pow(2, level-1) + 1;
+        if (level > 1) {
+            d->refCounter = pow(2, level-1) + 1;
+        } else {
+            d->refCounter = 0;
+        }
     } else {
         // cout << "DESCRIPTOR: " << LPDescriptorTable.at(d->blockID) << endl;
         LPDescriptorTable.erase(d->blockID);
