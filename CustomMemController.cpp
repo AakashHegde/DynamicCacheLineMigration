@@ -1,40 +1,41 @@
 #include "CustomMemController.h"
 
 static timeType currTimeStep;
+int currLevel;                  // Current Level we are checking for migrations
 
 class descriptor_T
-{
-    private:
-    timeType prevAccessTime;        // expirationTime = currentTime + lifeTime
-    // timeType expirationTime;
-    
+{    
     public:
     const bool inRLDRAM;
     int MQNum;                          // Indicate which queue this descriptor is currently in
     const unsigned long long blockID;   // Can be the cacheline address
     unsigned long refCounter;           // Reference Counter
+    timeType prevAccessTime;            // expirationTime = currentTime + lifeTime
 
-    descriptor_T(addrType addr, bool inRLDRAM) : 
+    descriptor_T(addrType cacheLineAddr, bool inRLDRAM) : 
     inRLDRAM(inRLDRAM),
     MQNum(-1),
-    blockID(addr >> NUM_CACHELINE_BITS),
+    blockID(cacheLineAddr),
     refCounter(0),
     prevAccessTime(0) {}
 
     void updateAccessTime() {
+        // cout << "UPDATE ACCESS TIME: " << currTimeStep << endl;
         prevAccessTime = currTimeStep;
     }
 
     void updateRefCounter() {
-        if(isAboveFilterThreshold(prevAccessTime, MQNum))
-        {
-            refCounter++;
-        }
+        // TODO: Uncomment
+        // if(isAboveFilterThreshold(prevAccessTime, MQNum))
+        // {
+        //     refCounter++;
+        // }
+        refCounter++;
     }
 
     friend ostream& operator<<(ostream& os, descriptor_T const& d) {
         // TODO: Print blockID in HEX value so that it's the address
-        return os << "blockID: " << d.blockID <<  " RefCounter: " << d.refCounter << " PrevAccess: " << d.prevAccessTime;
+        return os << "blockID: " << d.blockID << " RefCounter: " << d.refCounter << " PrevAccess: " << d.prevAccessTime;
     }
 };
 
@@ -52,6 +53,7 @@ class memoryAccess_T {
     cacheLineAddr(address >> NUM_CACHELINE_BITS) {}
 
     friend ostream& operator<<(ostream& os, memoryAccess_T const& ma) {
+        // TODO: Make it print in the same format as the original trace file
         return os << (ma.cacheLineAddr << NUM_CACHELINE_BITS) << "(" << (ma.address & ((1 << NUM_CACHELINE_BITS)-1))
             << ")" << " " << ma.isWrite << " " << ma.timeStamp;
     }
@@ -77,12 +79,12 @@ bool LPDescriptorExists(addrType addr) {
     return false;
 }
 
-descriptor_T * createLPDescriptorIfNotExists(addrType addr) {
+descriptor_T * createLPDescriptorIfNotExists(addrType cacheLineAddr) {
 
-    descriptor_T * d = new descriptor_T(addr, false);   //TODO: make this a smart pointer
+    descriptor_T * d = new descriptor_T(cacheLineAddr, false);   //TODO: make this a smart pointer
     
     // Add to Descriptor Table
-    LPDescriptorTable[addr] = d;
+    LPDescriptorTable[cacheLineAddr] = d;
 
     return d;
 }
@@ -97,6 +99,40 @@ void moveDescriptorToBackOfQueue(descriptor_T * d) {
     MQ[level].remove(d);
     // Insert to the back of the same queue
     insertDescriptorToQueue(d, level);
+}
+
+void promoteDescriptor(descriptor_T * d, int promotionLevel) {
+    int level = d->MQNum;
+    MQ[level].remove(d);
+    // Insert to the back of the promoted queue
+    insertDescriptorToQueue(d, promotionLevel);
+
+    cout << "Promoted (" << currTimeStep << "): " << *d << endl;
+
+    // Call CheckMigration()
+}
+
+void demoteDescriptor(descriptor_T * d) {
+    int level = d->MQNum;
+    MQ[level].remove(d);
+    if (level > 0) {
+        // Insert to the back of the lower queue
+        insertDescriptorToQueue(d, level-1);
+        d->updateAccessTime();
+        d->refCounter = pow(2, level-1) + 1;
+    } else {
+        // cout << "DESCRIPTOR: " << LPDescriptorTable.at(d->blockID) << endl;
+        LPDescriptorTable.erase(d->blockID);
+        // Destroy Descriptor
+        delete(d);
+    }
+    
+
+    // TODO: check if this same descriptor was previously demoted
+        // This will be another attrivute for the Decriptor: bool previousMovement
+        // If a descriptor is demoted twice consquetively, remove it from the MQ completely
+
+    // Call CheckMigration()
 }
 
 void printMQ() {
@@ -186,33 +222,32 @@ int main()
 {
     // 1. Setup the basic Queue and Related Structures for the MQ and the Descriptors
     cout << "Initializing Victim Queue..." << endl;
-    initVictimQueue();
+    // TODO: Uncomment this:
+    // initVictimQueue();
     cout << "Victim Queue Created. Size: " << victimQueue.size() << endl;
 
     // 2. Read the Trace file
     cout << "Reading Input Trace File..." << endl;
     timeType traceEndTime;
-    readTraceFile("traces/testMoveDescriptor.trace", &traceEndTime);
+    readTraceFile("traces/testDemotion.trace", &traceEndTime);
     cout << "Completed Reading Input Trace File. Trace End Cycle: " << traceEndTime << endl;
 
     memoryAccess_T * currMemAccess;
-    // cout << "Number of LP Descriptors: " << LPDescriptorTable.size() << endl;
-    // cout << "Number of RL Descriptors: " << RLDescriptorTable.size() << endl;
-    cout << "Victim Queue Size: " << victimQueue.size() << endl;
 
     // Start iteration through all time-steps until the traceEndTime
     cout << "Started Memory Controller Simulation..." << endl;
+    currLevel = 0;
     for (currTimeStep = 0; currTimeStep <= traceEndTime; currTimeStep++) {
 
         if (isMemoryAccessTimeStep(currTimeStep)) {
             // Memory access at this cycle, so do stuff with the Descriptor
 
-            currMemAccess = memoryAccesses[currTimeStep];
+            currMemAccess = memoryAccesses.at(currTimeStep);
             descriptor_T * d;
             
             if (LPDescriptorExists(currMemAccess->cacheLineAddr)) {
                 // Get the Descriptor of this previously seen memory address
-                d = LPDescriptorTable[currMemAccess->cacheLineAddr];
+                d = LPDescriptorTable.at(currMemAccess->cacheLineAddr);
                 d->updateAccessTime();
                 d->updateRefCounter();
 
@@ -225,19 +260,42 @@ int main()
 
                 insertDescriptorToQueue(d, 0);
             }
+            printMQ();
         }
 
         // 3. Implement Queuing Algorithm
+        if (!MQ[currLevel].empty()) {
+            descriptor_T * currLevelHead = MQ[currLevel].front();
+
+            if (currLevelHead->prevAccessTime + LIFE_TIME < currTimeStep) {
+                demoteDescriptor(currLevelHead);
+            } else {
+                int promotionLevel = 0;
+                // Find highest promotion level
+                for(; promotionLevel < MQ_LENGTH; ++promotionLevel)
+                {
+                    if(pow(2, promotionLevel+1) >= currLevelHead->refCounter)
+                        break;
+                }
+
+                if (promotionLevel > currLevelHead->MQNum) {
+                    promoteDescriptor(currLevelHead, promotionLevel);
+                }
+            }
+        }
 
         // 4. Implement Remap Table
 
         // 5. Write to Trace File
-        printMQ();
+
+        currLevel = (currLevel + 1) % MQ_LENGTH;
     }
+
+    // for (auto it = LPDescriptorTable.cbegin(); it != LPDescriptorTable.cend(); ++it) {
+    //     std::cout << "{" << (*it).first;
+    // }
 
     cout << "Completed Memory Controller Simulation." << endl;
 
     cout << "Number of LP Descriptors: " << LPDescriptorTable.size() << endl;
-    // cout << "Number of RL Descriptors: " << RLDescriptorTable.size() << endl;
-    // cout << "Victim Queue Size: " << victimQueue.size() << endl;
 }
