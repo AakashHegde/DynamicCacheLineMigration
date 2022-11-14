@@ -107,7 +107,7 @@ void promoteDescriptor(descriptor_T * d, int promotionLevel) {
     // Insert to the back of the promoted queue
     insertDescriptorToQueue(d, promotionLevel);
 
-    cout << "Promoted (" << currTimeStep << "): " << *d << endl;
+    // cout << "Promoted (" << currTimeStep << "): " << *d << endl;
 
     // Call CheckMigration()
 }
@@ -240,6 +240,7 @@ int main()
 
     // Start iteration through all time-steps until the traceEndTime
     cout << "Started Memory Controller Simulation..." << endl;
+    cout << "---------------------------------------" << endl;
     currLevel = 0;
     for (currTimeStep = 0; currTimeStep <= traceEndTime; currTimeStep++) {
 
@@ -264,7 +265,7 @@ int main()
 
                 insertDescriptorToQueue(d, 0);
             }
-            printMQ();
+            //printMQ();
         }
 
         // 3. Implement Queuing Algorithm
@@ -299,6 +300,7 @@ int main()
     //     std::cout << "{" << (*it).first;
     // }
 
+    cout << "---------------------------------------" << endl;
     cout << "Completed Memory Controller Simulation." << endl;
 
     cout << "Number of LP Descriptors: " << LPDescriptorTable.size() << endl;
