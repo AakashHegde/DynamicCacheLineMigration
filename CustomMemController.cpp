@@ -25,12 +25,9 @@ class descriptor_T
     }
 
     void updateRefCounter() {
-        // TODO: Uncomment
-        // if(isAboveFilterThreshold(prevAccessTime, MQNum))
-        // {
-        //     refCounter++;
-        // }
-        refCounter++;
+        if (isAboveFilterThreshold(prevAccessTime, MQNum)) {
+            refCounter++;
+        }
     }
 
     friend ostream& operator<<(ostream& os, descriptor_T const& d) {
@@ -63,7 +60,7 @@ unordered_map<timeType, memoryAccess_T *> memoryAccesses;           // Array of 
 unordered_map<addrType, addrType> ramapTable;                       // Hash Table to store memory access redirections
 unordered_map<addrType, descriptor_T *> LPDescriptorTable;          // Hash Table to lookup descriptor for LPDRAM addresses
 unordered_map<addrType, descriptor_T *> RLDescriptorTable;          // Hash Table to lookup descriptor for RLDRAM addresses
-array<list<descriptor_T *>, MQ_LENGTH> MQ;                  // Array or Queues
+array<list<descriptor_T *>, MQ_LENGTH> MQ;                          // Array of Queues
 queue<descriptor_T *> victimQueue;                                  // Queue for the Victim Descriptors of the RLDRAM
 
 // This is used to check whether to update the refCounter
@@ -151,6 +148,12 @@ void printMQ() {
     cout << "--------------------" << endl;
 }
 
+void printMQSizes() {
+    for (int i = MQ_LENGTH-1; i >= 0; i--) {
+        cout << MQ[i].size() << endl;
+    }
+}
+
 void initVictimQueue()
 {
     for(addrType addr = 0; addr < NUM_CACHELINES_RLDRAM; ++addr)
@@ -224,16 +227,22 @@ bool isMemoryAccessTimeStep(timeType t) {
 
 int main()
 {
+    // string traceFile = "traces/LU.trace";
+    string traceFile = "traces/RADIX.trace";
+    //string traceFile = "traces/FFT.trace";
+    //string traceFile = "traces/testMoveDescriptor.trace";
+    //string traceFile = "traces/testPromotion.trace";
+    //string traceFile = "traces/testDemotion.trace";
+
     // 1. Setup the basic Queue and Related Structures for the MQ and the Descriptors
     cout << "Initializing Victim Queue..." << endl;
-    // TODO: Uncomment this:
-    // initVictimQueue();
+    initVictimQueue();
     cout << "Victim Queue Created. Size: " << victimQueue.size() << endl;
 
     // 2. Read the Trace file
     cout << "Reading Input Trace File..." << endl;
     timeType traceEndTime;
-    readTraceFile("traces/testDemotion.trace", &traceEndTime);
+    readTraceFile(traceFile, &traceEndTime);
     cout << "Completed Reading Input Trace File. Trace End Cycle: " << traceEndTime << endl;
 
     memoryAccess_T * currMemAccess;
@@ -294,11 +303,17 @@ int main()
         // 5. Write to Trace File
 
         currLevel = (currLevel + 1) % MQ_LENGTH;
+        if (currTimeStep % 10000 == 0) {
+            cout << currTimeStep << endl;
+        }
     }
 
     // for (auto it = LPDescriptorTable.cbegin(); it != LPDescriptorTable.cend(); ++it) {
     //     std::cout << "{" << (*it).first;
     // }
+
+    printMQ();
+    printMQSizes();
 
     cout << "---------------------------------------" << endl;
     cout << "Completed Memory Controller Simulation." << endl;
