@@ -18,7 +18,7 @@ using namespace std;
 
 // move the follwoing defines to input arguments to the program
 #define RLDRAM_SIZE (1024U*1024U*1024U*1U) // 1GB
-#define LPDRAM_SIZE (1024U*1024U*1024U*4U) // 4GB
+#define LPDRAM_SIZE (1024U*1024U*1024U*4UL) // 4GB
 #define CACHELINE_SIZE 64
 #define NUM_CACHELINE_BITS int(log2(CACHELINE_SIZE))
 #define NUM_CACHELINES_RLDRAM (RLDRAM_SIZE/CACHELINE_SIZE)

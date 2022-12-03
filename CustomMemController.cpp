@@ -6,8 +6,19 @@ static timeType outputTimeStep;
 class remapEntry
 {
     public:
+    // TODO: instead of storing a TRUE/FALSE array, can't we just store the encoded binary value of which cacheline is stored here?
+    //       - Change the updateCounter function: IF condition becomes: if (entryIndex == currLineInFastMem)
+
+
     array<bool, NUM_CACHELINES_PER_SEGMENT> isInFastMem; // flags to indicate whether cacheline in in fast memory
     int8_t counter;
+
+    remapEntry() {
+        for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++) {
+            isInFastMem[i] = false;
+        }
+        counter = 0;
+    }
 
     void updateCounter(int entryIndex)
     {
@@ -48,8 +59,17 @@ class memoryAccess_T {
     }
 };
 
-vector<memoryAccess_T *> memoryAccesses;           // Array of all the Input Trace file memory accesses
-array<remapEntry, NUM_CACHELINES_RLDRAM> remapTable; // Array to store the remap entries
+vector<memoryAccess_T *> memoryAccesses;                // Array of all the Input Trace file memory accesses
+array<remapEntry, NUM_CACHELINES_RLDRAM> remapTable;    // Array to store the remap entries
+
+void printRemapTable(int remapIndex) {
+    remapEntry re = remapTable[remapIndex];
+    printf("RemapEntry: %d, Counter=%d, entryIndices=", remapIndex, re.counter);
+    for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++) {
+        printf("%d", re.isInFastMem[i]);
+    }
+    printf("\n");
+}
 
 void readTraceFile(string file, timeType * endTime) {
     ifstream trace_file;
@@ -108,7 +128,9 @@ int main()
     // string traceFile = "traces/LU.trace";
     // string traceFile = "traces/RADIX.trace";
     //string traceFile = "traces/FFT.trace";
-    string traceFile = "traces/test.trace";
+    string traceFile = "traces/testEntryIndexing.trace";
+
+    outputTimeStep = 0;
 
     // 2. Read the Trace file
     cout << "Reading Input Trace File..." << endl;
@@ -121,20 +143,26 @@ int main()
     cout << "---------------------------------------" << endl;
 
     memoryAccess_T * currMemAccess;
+    remapEntry * currentEntry;
 
     // Iterate through all the lines read from the trace file
     for(int inputTraceIdx = 0; inputTraceIdx < memoryAccesses.size(); ++inputTraceIdx)
     {
         currMemAccess = memoryAccesses[inputTraceIdx];
+        
+        inputTimeStep = currMemAccess->timeStamp;
 
         // Update output time step to be used in output trace file time stamp
         outputTimeStep = max(outputTimeStep, inputTimeStep);
 
-        remapEntry currentEntry = remapTable[currMemAccess->remapIndex];
-        currentEntry.updateCounter(currMemAccess->entryIndex);
+        currentEntry = &remapTable[currMemAccess->remapIndex];
 
-        if(currentEntry.isCounterAboveThreshold())
+        currentEntry->updateCounter(currMemAccess->entryIndex);
+
+        printRemapTable(currMemAccess->remapIndex);
+        if(currentEntry->isCounterAboveThreshold())
         {
+            cout << "---------- Migration Performed ----------" << endl;
             //TODO migrate
         }
         else
