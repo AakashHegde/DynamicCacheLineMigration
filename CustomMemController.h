@@ -12,9 +12,12 @@
 
 using namespace std;
 
+#define WRITE true
+#define READ !WRITE
+
 #define MIGRATION_COST 1000 // Cycles
 
-#define PROMOTION_THRESHOLD 32 // Counter value at which the 
+#define PROMOTION_THRESHOLD 4 // Counter value at which the 
 
 // move the follwoing defines to input arguments to the program
 #define RLDRAM_SIZE (1024U*1024U*1024U*1U) // 1GB
@@ -28,3 +31,6 @@ using namespace std;
 
 typedef unsigned int addrType;
 typedef unsigned long long timeType;
+
+void writeToTraceFile(ofstream &file, addrType address, bool isWrite);
+addrType translateAddress(int remapIndex);

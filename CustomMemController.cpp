@@ -28,13 +28,30 @@ class remapEntry
             counter = min(127, (int)counter + 1); // saturate uncount at 127 (i.e. the highest value possible for int8_t)
     }
 
+    void resetCounter() {
+        counter = 0;
+    }
+
+    void resetFlags() {
+        for (auto i: isInFastMem) {
+            i = false;
+        }
+    }
+
+    int findTrueFlag() {
+        for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++) {
+            if (isInFastMem[i]) return i;
+        }
+        return -1;
+    }
+
     bool isCounterAboveThreshold()
     {
         return counter >= PROMOTION_THRESHOLD;
     }
 };
 
-class memoryAccess_T {
+class memoryAccess {
     public:
     const addrType address;
     const addrType cacheLineAddr;
@@ -43,7 +60,7 @@ class memoryAccess_T {
     const addrType remapIndex;  // part of cacheline address used to index to the correct remap entry
     const int entryIndex;     // part of cacheline address used to index to the correct cacheline in the entry
 
-    memoryAccess_T(addrType address, bool isWrite, timeType timeStamp) :
+    memoryAccess(addrType address, bool isWrite, timeType timeStamp) :
     address(address),
     isWrite(isWrite),
     timeStamp(timeStamp),
@@ -52,14 +69,14 @@ class memoryAccess_T {
     entryIndex(cacheLineAddr >> NUM_CACHELINES_RLDRAM_BITS)
     {}
 
-    friend ostream& operator<<(ostream& os, memoryAccess_T const& ma) {
+    friend ostream& operator<<(ostream& os, memoryAccess const& ma) {
         // TODO: Make it print in the same format as the original trace file
         return os << ma.address << "\t" << ma.cacheLineAddr << "\t" << ma.remapIndex << "\t" << ma.entryIndex
         << "\t" << ma.isWrite << "\t" << ma.timeStamp;
     }
 };
 
-vector<memoryAccess_T *> memoryAccesses;                // Array of all the Input Trace file memory accesses
+vector<memoryAccess *> memoryAccesses;                // Array of all the Input Trace file memory accesses
 array<remapEntry, NUM_CACHELINES_RLDRAM> remapTable;    // Array to store the remap entries
 
 void printRemapTable(int remapIndex) {
@@ -76,7 +93,7 @@ void readTraceFile(string file, timeType * endTime) {
 
     trace_file.open(file, ios::in);
     if (trace_file.fail()) {
-        cout << "Failed to open Trace File." << endl;
+        cout << "Failed to open Trace File: " << file << endl;
         exit(1);
     }
 
@@ -114,7 +131,7 @@ void readTraceFile(string file, timeType * endTime) {
             exit(1);
         }
 
-        memoryAccess_T * ptr = new memoryAccess_T(addr, isWrite, time); //TODO: Make this a smart pointer
+        memoryAccess * ptr = new memoryAccess(addr, isWrite, time); //TODO: Make this a smart pointer
         memoryAccesses.push_back(ptr);
     }
 
@@ -123,12 +140,95 @@ void readTraceFile(string file, timeType * endTime) {
     trace_file.close();
 }
 
+bool isEntryEmpty(array<bool, NUM_CACHELINES_PER_SEGMENT>& isInFastMem) {
+    for (auto i: isInFastMem) {
+        if (i) return false;
+    }
+    return true;
+}
+
+void migrateCacheline(remapEntry * currentEntry, memoryAccess * currMemAccess,
+                      ofstream& RLTraceFileStream, ofstream& LPTraceFileStream) {
+
+    // Check if this entry has no cachelines in fast memory
+    if (isEntryEmpty(currentEntry->isInFastMem)) {
+        if (!currMemAccess->isWrite) {
+            writeToTraceFile(LPTraceFileStream, currMemAccess->address, READ);
+            outputTimeStep++;
+        }
+
+        writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), WRITE);
+        outputTimeStep++;
+    } else {
+        // Swapping occurs here; number of steps for swap depends on READ or WRITE
+        int previousEntryIndex = currentEntry->findTrueFlag();
+        addrType previousAddress = previousEntryIndex << (NUM_CACHELINE_BITS + NUM_CACHELINES_RLDRAM_BITS);
+        previousAddress |= currMemAccess->remapIndex << NUM_CACHELINE_BITS;
+
+        if (currMemAccess->isWrite) {
+            writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), READ);
+            outputTimeStep++;
+        } else {
+            writeToTraceFile(LPTraceFileStream, currMemAccess->address, READ);
+            writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), READ);
+            outputTimeStep++;
+        }
+        writeToTraceFile(LPTraceFileStream, previousAddress, WRITE);
+        writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), WRITE);
+        outputTimeStep++;
+    }
+
+    // Update Remap Entry
+    currentEntry->resetFlags();
+    currentEntry->isInFastMem[currMemAccess->entryIndex] = true;
+    currentEntry->resetCounter();
+}
+void writeToTraceFile(ofstream &file, addrType address, bool isWrite) {
+    file << "0x";
+    file.width(8);
+    file.fill('0');
+    file << hex << uppercase << address << " ";
+    if (isWrite) {
+        file << "WRITE" << " ";
+    } else {
+        file << "READ" << " ";
+    }
+    file << dec << outputTimeStep << endl;
+}
+
+addrType translateAddress(int remapIndex) {
+    addrType newAddress;
+
+    newAddress = remapIndex << NUM_CACHELINE_BITS;
+    // newAddress |= oldAddress & ((1 << NUM_CACHELINE_BITS) - 1);
+
+    return newAddress;
+}
+
 int main()
 {
-    // string traceFile = "traces/LU.trace";
-    // string traceFile = "traces/RADIX.trace";
-    //string traceFile = "traces/FFT.trace";
-    string traceFile = "traces/testEntryIndexing.trace";
+    // string inputTraceFileName = "LU";
+    // string inputTraceFileName = "RADIX";
+    // string inputTraceFileName = "FFT";
+    // string inputTraceFileName = "testEntryIndexing";
+    string inputTraceFileName = "testMigrations";
+
+    string traceFile   = "traces/" + inputTraceFileName + ".trace";
+    string RLTraceFile = "traces/" + inputTraceFileName + "_RL" + ".trace";
+    string LPTraceFile = "traces/" + inputTraceFileName + "_LP" + ".trace";
+
+    ofstream RLTraceFileStream, LPTraceFileStream;
+
+    RLTraceFileStream.open(RLTraceFile, ios::out);
+    if (RLTraceFileStream.fail()) {
+        cout << "Failed to open RL Trace File." << endl;
+        exit(1);
+    }
+    LPTraceFileStream.open(LPTraceFile, ios::out);
+    if (LPTraceFileStream.fail()) {
+        cout << "Failed to open LP Trace File." << endl;
+        exit(1);
+    }
 
     outputTimeStep = 0;
 
@@ -142,7 +242,7 @@ int main()
     cout << "Started Memory Controller Simulation..." << endl;
     cout << "---------------------------------------" << endl;
 
-    memoryAccess_T * currMemAccess;
+    memoryAccess * currMemAccess;
     remapEntry * currentEntry;
 
     // Iterate through all the lines read from the trace file
@@ -163,11 +263,18 @@ int main()
         if(currentEntry->isCounterAboveThreshold())
         {
             cout << "---------- Migration Performed ----------" << endl;
-            //TODO migrate
+            migrateCacheline(currentEntry, currMemAccess, RLTraceFileStream, LPTraceFileStream);
         }
         else
         {
-            //forward address to trace file
+            if (currentEntry->isInFastMem[currMemAccess->entryIndex]) {
+                // Write to RL Tracefile with RemapIndex as the address
+                writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), currMemAccess->isWrite);
+            } else {
+                // Write to LP Tracefile with original address
+                writeToTraceFile(LPTraceFileStream, currMemAccess->address, currMemAccess->isWrite);
+            }
+            outputTimeStep++;
         }
 
 
@@ -179,6 +286,8 @@ int main()
             //       In the case of writing to the LPDRAM trace file, just write the incoming address as it is.
     }
 
+    RLTraceFileStream.close();
+    LPTraceFileStream.close();
 
     cout << "---------------------------------------" << endl;
     cout << "Completed Memory Controller Simulation." << endl;
