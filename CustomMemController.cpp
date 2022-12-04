@@ -70,7 +70,6 @@ class memoryAccess {
     {}
 
     friend ostream& operator<<(ostream& os, memoryAccess const& ma) {
-        // TODO: Make it print in the same format as the original trace file
         return os << ma.address << "\t" << ma.cacheLineAddr << "\t" << ma.remapIndex << "\t" << ma.entryIndex
         << "\t" << ma.isWrite << "\t" << ma.timeStamp;
     }
@@ -276,14 +275,6 @@ int main()
             }
             outputTimeStep++;
         }
-
-
-        // 4. Implement Remap Table
-
-        // 5. Write to Trace File
-            // TODO: When we write to the RLDRAM trace file, we need to OR the cacheline bits (lower 6 bits) of the incomming
-            //       address with the blockID/cacheline base address for that remapped address.
-            //       In the case of writing to the LPDRAM trace file, just write the incoming address as it is.
     }
 
     RLTraceFileStream.close();
