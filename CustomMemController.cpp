@@ -23,7 +23,9 @@ class remapEntry
     void updateCounter(int entryIndex)
     {
         if(isInFastMem[entryIndex])
-            counter = max(-128, ((int)counter - 1)); // saturate downcount at -128 (i.e. the lowest value possible for int8_t)
+            // TODO: experiment with using negative count or not
+            // counter = max(-128, ((int)counter - 1)); // saturate downcount at -128 (i.e. the lowest value possible for int8_t)
+            counter = max(0, ((int)counter - 1));
         else
             counter = min(127, (int)counter + 1); // saturate uncount at 127 (i.e. the highest value possible for int8_t)
     }
@@ -208,9 +210,9 @@ int main()
 {
     // string inputTraceFileName = "LU";
     // string inputTraceFileName = "RADIX";
-    // string inputTraceFileName = "FFT";
+    string inputTraceFileName = "FFT";
     // string inputTraceFileName = "testEntryIndexing";
-    string inputTraceFileName = "testMigrations";
+    // string inputTraceFileName = "testMigrations";
 
     string traceFile   = "traces/" + inputTraceFileName + ".trace";
     string RLTraceFile = "traces/" + inputTraceFileName + "_RL" + ".trace";
@@ -243,6 +245,7 @@ int main()
 
     memoryAccess * currMemAccess;
     remapEntry * currentEntry;
+    int numMigrations = 0;
 
     // Iterate through all the lines read from the trace file
     for(int inputTraceIdx = 0; inputTraceIdx < memoryAccesses.size(); ++inputTraceIdx)
@@ -258,11 +261,14 @@ int main()
 
         currentEntry->updateCounter(currMemAccess->entryIndex);
 
-        printRemapTable(currMemAccess->remapIndex);
+        // printRemapTable(currMemAccess->remapIndex);
         if(currentEntry->isCounterAboveThreshold())
         {
-            cout << "---------- Migration Performed ----------" << endl;
+            // cout << "---------- Migration Performed ----------" << endl;
             migrateCacheline(currentEntry, currMemAccess, RLTraceFileStream, LPTraceFileStream);
+            printf("Address: 0x%x, RemapIndex: %d, EntryIndex: %d\n",
+                    currMemAccess->address, currMemAccess->remapIndex, currMemAccess->entryIndex);
+            numMigrations++;
         }
         else
         {
@@ -282,4 +288,5 @@ int main()
 
     cout << "---------------------------------------" << endl;
     cout << "Completed Memory Controller Simulation." << endl;
+    cout << "Number of Migrations: " << numMigrations << endl;
 }
