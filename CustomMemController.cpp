@@ -1,6 +1,8 @@
 #include "CustomMemController.h"
 
+// inputTimeStep: timestep of the most recently read input trace
 static timeType inputTimeStep;
+// outputTimeStep: timestep of the most recently written output trace
 static timeType outputTimeStep;
 
 // Statistics
@@ -8,89 +10,86 @@ static int numSwaps;
 static int numMoveToFast;
 static int numMoveToSlow;
 
-class remapEntry
+// memoryAccesses: array of all the input trace file memory accesses
+vector<memoryAccess *> memoryAccesses;
+// remapTable: array to store the remap entries
+array<remapEntry, NUM_CACHELINES_RLDRAM> remapTable;
+
+remapEntry::remapEntry() 
 {
-    public:
-    // TODO: instead of storing a TRUE/FALSE array, can't we just store the encoded binary value of which cacheline is stored here?
-    //       - Change the updateCounter function: IF condition becomes: if (entryIndex == currLineInFastMem)
+    for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++) 
+        isInFastMem[i] = false;
 
+    counter = 0;
+}
 
-    array<bool, NUM_CACHELINES_PER_SEGMENT> isInFastMem; // flags to indicate whether cacheline in in fast memory
-    int8_t counter;
+// updateCounter(): update the shared counter for this entry
+void remapEntry::updateCounter(int entryIndex)
+{
+    if(isInFastMem[entryIndex])
+        // counter = max(-128, ((int)counter - 1)); // saturate downcount at -128 (i.e. the lowest value possible for int8_t)
+        counter = max(0, ((int)counter - 1)); // saturate downcount at 0
+    else
+        counter = min(127, (int)counter + 1); // saturate upcount at 127 (i.e. the highest value possible for int8_t)
+}
 
-    remapEntry() {
-        for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++) {
-            isInFastMem[i] = false;
-        }
-        counter = 0;
-    }
+// resetCounter(): reset the shared counter for this entry
+void remapEntry::resetCounter() 
+{
+    counter = 0;
+}
 
-    void updateCounter(int entryIndex)
-    {
-        if(isInFastMem[entryIndex])
-            // TODO: experiment with using negative count or not
-            // counter = max(-128, ((int)counter - 1)); // saturate downcount at -128 (i.e. the lowest value possible for int8_t)
-            counter = max(0, ((int)counter - 1));
-        else
-            counter = min(127, (int)counter + 1); // saturate uncount at 127 (i.e. the highest value possible for int8_t)
-    }
+// resetFlags(): reset the flags for this entry
+void remapEntry::resetFlags() 
+{
+    for (auto i: isInFastMem) 
+        i = false;
+}
 
-    void resetCounter() {
-        counter = 0;
-    }
+// findTrueFlag(): find which segment in this entry is present in fast memory; return -1 if no segment is in fast memory
+int remapEntry::findTrueFlag() 
+{
+    for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++)
+        if (isInFastMem[i]) return i;
 
-    void resetFlags() {
-        for (auto i: isInFastMem) {
-            i = false;
-        }
-    }
+    return -1;
+}
 
-    int findTrueFlag() {
-        for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++) {
-            if (isInFastMem[i]) return i;
-        }
-        return -1;
-    }
+// isCounterAboveThreshold(): return true if the shared counter is above the migration threshold
+bool remapEntry::isCounterAboveThreshold()
+{
+    return counter >= PROMOTION_THRESHOLD;
+}
 
-    bool isCounterAboveThreshold()
-    {
-        return counter >= PROMOTION_THRESHOLD;
-    }
-};
+// isEntryEmpty(): return true if none of the segments in this entry are in fast memory
+bool remapEntry::isEntryEmpty()
+{
+    for (auto i: isInFastMem)
+        if (i) return false;
+    return true;
+}
 
-class memoryAccess {
-    public:
-    const addrType address;
-    const addrType cacheLineAddr;
-    const bool isWrite;
-    const timeType timeStamp;
-    const addrType remapIndex;  // part of cacheline address used to index to the correct remap entry
-    const int entryIndex;     // part of cacheline address used to index to the correct cacheline in the entry
+memoryAccess::memoryAccess(addrType address, bool isWrite, timeType timeStamp) :
+address(address),
+isWrite(isWrite),
+timeStamp(timeStamp),
+cacheLineAddr(address >> NUM_CACHELINE_BITS),
+remapIndex(cacheLineAddr & ((1 << NUM_CACHELINES_RLDRAM_BITS) - 1)),
+entryIndex(cacheLineAddr >> NUM_CACHELINES_RLDRAM_BITS)
+{}
 
-    memoryAccess(addrType address, bool isWrite, timeType timeStamp) :
-    address(address),
-    isWrite(isWrite),
-    timeStamp(timeStamp),
-    cacheLineAddr(address >> NUM_CACHELINE_BITS),
-    remapIndex(cacheLineAddr & ((1 << NUM_CACHELINES_RLDRAM_BITS) - 1)),
-    entryIndex(cacheLineAddr >> NUM_CACHELINES_RLDRAM_BITS)
-    {}
+// overload the outstream operator to conviniently print out relevant information from objects of this class
+ostream&  operator<<(ostream& os, memoryAccess const& ma) {
+    return os << ma.address << "\t" << ma.cacheLineAddr << "\t" << ma.remapIndex << "\t" << ma.entryIndex
+    << "\t" << ma.isWrite << "\t" << ma.timeStamp;
+}
 
-    friend ostream& operator<<(ostream& os, memoryAccess const& ma) {
-        return os << ma.address << "\t" << ma.cacheLineAddr << "\t" << ma.remapIndex << "\t" << ma.entryIndex
-        << "\t" << ma.isWrite << "\t" << ma.timeStamp;
-    }
-};
-
-vector<memoryAccess *> memoryAccesses;                // Array of all the Input Trace file memory accesses
-array<remapEntry, NUM_CACHELINES_RLDRAM> remapTable;    // Array to store the remap entries
-
-void printRemapTable(int remapIndex) {
+// printRemapTableEntry(): print the entire re-map table; use only for debugging
+void printRemapTableEntry(int remapIndex) {
     remapEntry re = remapTable[remapIndex];
     printf("RemapEntry: %d, Counter=%d, entryIndices=", remapIndex, re.counter);
-    for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++) {
+    for (int i = 0; i < NUM_CACHELINES_PER_SEGMENT; i++)
         printf("%d", re.isInFastMem[i]);
-    }
     printf("\n");
 }
 
@@ -107,6 +106,28 @@ int countNumFastMemCacheLines() {
     return count;
 }
 
+int countNumFastMemCacheLines() {
+    int count = 0;
+    for (int i = 0; i < remapTable.size(); i++) {
+        for (auto j : remapTable[i].isInFastMem) {
+            if (j) {
+                count++;
+                break;
+            }
+        }
+    }
+    return count;
+}
+
+// translateAddress(): return cache line address in fast memory based on the remap index
+addrType translateAddress(int remapIndex) 
+{
+    addrType newAddress;
+    newAddress = remapIndex << NUM_CACHELINE_BITS;
+    return newAddress;
+}
+
+// readTraceFile(): read the input trace file
 void readTraceFile(string file, timeType * endTime) {
     ifstream trace_file;
 
@@ -159,50 +180,9 @@ void readTraceFile(string file, timeType * endTime) {
     trace_file.close();
 }
 
-bool isEntryEmpty(array<bool, NUM_CACHELINES_PER_SEGMENT>& isInFastMem) {
-    for (auto i: isInFastMem) {
-        if (i) return false;
-    }
-    return true;
-}
-
-void migrateCacheline(remapEntry * currentEntry, memoryAccess * currMemAccess,
-                      ofstream& RLTraceFileStream, ofstream& LPTraceFileStream) {
-
-    // Check if this entry has no cachelines in fast memory
-    if (isEntryEmpty(currentEntry->isInFastMem)) {
-        if (!currMemAccess->isWrite) {
-            writeToTraceFile(LPTraceFileStream, currMemAccess->address, READ);
-            outputTimeStep++;
-        }
-
-        writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), WRITE);
-        outputTimeStep++;
-    } else {
-        // Swapping occurs here; number of steps for swap depends on READ or WRITE
-        int previousEntryIndex = currentEntry->findTrueFlag();
-        addrType previousAddress = previousEntryIndex << (NUM_CACHELINE_BITS + NUM_CACHELINES_RLDRAM_BITS);
-        previousAddress |= currMemAccess->remapIndex << NUM_CACHELINE_BITS;
-
-        if (currMemAccess->isWrite) {
-            writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), READ);
-            outputTimeStep++;
-        } else {
-            writeToTraceFile(LPTraceFileStream, currMemAccess->address, READ);
-            writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), READ);
-            outputTimeStep++;
-        }
-        writeToTraceFile(LPTraceFileStream, previousAddress, WRITE);
-        writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), WRITE);
-        outputTimeStep++;
-    }
-
-    // Update Remap Entry
-    currentEntry->resetFlags();
-    currentEntry->isInFastMem[currMemAccess->entryIndex] = true;
-    currentEntry->resetCounter();
-}
-void writeToTraceFile(ofstream &file, addrType address, bool isWrite) {
+// writeToTraceFile(): write to output trace file
+void writeToTraceFile(ofstream &file, addrType address, bool isWrite) 
+{
     file << "0x";
     file.width(8);
     file.fill('0');
@@ -215,13 +195,48 @@ void writeToTraceFile(ofstream &file, addrType address, bool isWrite) {
     file << dec << outputTimeStep << endl;
 }
 
-addrType translateAddress(int remapIndex) {
-    addrType newAddress;
+// migrateCacheLine(): migrate cache line based
+void migrateCacheline(remapEntry * currentEntry, memoryAccess * currMemAccess, ofstream& RLTraceFileStream, ofstream& LPTraceFileStream) 
+{
+    // Check if this entry has no cachelines in fast memory
+    if (currentEntry->isEntryEmpty()) 
+    {
+        if (!currMemAccess->isWrite) 
+        {
+            writeToTraceFile(LPTraceFileStream, currMemAccess->address, READ);
+            outputTimeStep++;
+        }
 
-    newAddress = remapIndex << NUM_CACHELINE_BITS;
-    // newAddress |= oldAddress & ((1 << NUM_CACHELINE_BITS) - 1);
+        writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), WRITE);
+        outputTimeStep++;
+    } 
+    else 
+    {
+        // Swapping occurs here; number of steps for swap depends on READ or WRITE
+        int previousEntryIndex = currentEntry->findTrueFlag();
+        addrType previousAddress = previousEntryIndex << (NUM_CACHELINE_BITS + NUM_CACHELINES_RLDRAM_BITS);
+        previousAddress |= currMemAccess->remapIndex << NUM_CACHELINE_BITS;
 
-    return newAddress;
+        if (currMemAccess->isWrite) 
+        {
+            writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), READ);
+            outputTimeStep++;
+        } 
+        else 
+        {
+            writeToTraceFile(LPTraceFileStream, currMemAccess->address, READ);
+            writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), READ);
+            outputTimeStep++;
+        }
+        writeToTraceFile(LPTraceFileStream, previousAddress, WRITE);
+        writeToTraceFile(RLTraceFileStream, translateAddress(currMemAccess->remapIndex), WRITE);
+        outputTimeStep++;
+    }
+
+    // Update remap table entry
+    currentEntry->resetFlags();
+    currentEntry->isInFastMem[currMemAccess->entryIndex] = true;
+    currentEntry->resetCounter();
 }
 
 int main()
@@ -283,7 +298,7 @@ int main()
 
         currentEntry->updateCounter(currMemAccess->entryIndex);
 
-        // printRemapTable(currMemAccess->remapIndex);
+        // printRemapTableEntry(currMemAccess->remapIndex);
         if(currentEntry->isCounterAboveThreshold())
         {
             // cout << "---------- Migration Performed ----------" << endl;
