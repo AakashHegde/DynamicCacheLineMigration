@@ -3,6 +3,11 @@
 static timeType inputTimeStep;
 static timeType outputTimeStep;
 
+// Statistics
+static int numSwaps;
+static int numMoveToFast;
+static int numMoveToSlow;
+
 class remapEntry
 {
     public:
@@ -87,6 +92,19 @@ void printRemapTable(int remapIndex) {
         printf("%d", re.isInFastMem[i]);
     }
     printf("\n");
+}
+
+int countNumFastMemCacheLines() {
+    int count = 0;
+    for (int i = 0; i < remapTable.size(); i++) {
+        for (auto j : remapTable[i].isInFastMem) {
+            if (j) {
+                count++;
+                break;
+            }
+        }
+    }
+    return count;
 }
 
 void readTraceFile(string file, timeType * endTime) {
@@ -208,9 +226,9 @@ addrType translateAddress(int remapIndex) {
 
 int main()
 {
-    // string inputTraceFileName = "LU";
+    string inputTraceFileName = "LU";
+    // string inputTraceFileName = "FFT";
     // string inputTraceFileName = "RADIX";
-    string inputTraceFileName = "FFT";
     // string inputTraceFileName = "testEntryIndexing";
     // string inputTraceFileName = "testMigrations";
 
@@ -230,6 +248,10 @@ int main()
         cout << "Failed to open LP Trace File." << endl;
         exit(1);
     }
+
+    numSwaps = 0;
+    numMoveToFast = 0;
+    numMoveToSlow = 0;
 
     outputTimeStep = 0;
 
@@ -288,5 +310,7 @@ int main()
 
     cout << "---------------------------------------" << endl;
     cout << "Completed Memory Controller Simulation." << endl;
+    cout << "---------------------------------------" << endl;
     cout << "Number of Migrations: " << numMigrations << endl;
+    cout << "Remap Table Size: " << countNumFastMemCacheLines() << endl;
 }
